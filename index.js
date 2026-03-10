@@ -765,75 +765,117 @@ app.get('/update-bridallive-tags', async (req, res) => {
     
     console.log('🔑 Token obtenido:', token.substring(0, 10) + '...');
     
-    // Consumir endpoint de contactos para ambas categorías
-    console.log('📋 Obteniendo contactos de BridalLive...');
+    // Configuración de todas las categorías de novias
+    const bridesCategories = [
+      { id: 53670, name: 'Brides - Booked - Completed', icon: '✅', testLimit: 1 },
+      { id: 53671, name: 'Brides - Not Purchased', icon: '⚫', testLimit: 1 },
+      { id: 53672, name: 'Brides - Purchased', icon: '✅', testLimit: 1 },
+      { id: 55210, name: 'Brides - Accessories - Purchased', icon: '💍', testLimit: 1 },
+      { id: 58522, name: 'Brides - Civil - Booked', icon: '📅', testLimit: 1 },
+      { id: 58523, name: 'Brides - Civil - Purchased', icon: '✅', testLimit: 1 },
+      { id: 58524, name: 'Brides - Civil - Not Purchased', icon: '⚫', testLimit: 1 },
+      { id: 60210, name: 'Brides - Booked', icon: '📅', testLimit: 1 },
+      { id: 65553, name: 'Brides - Booked - Canceled/No Show', icon: '❌', testLimit: 1 }
+    ];
+
+    // Consumir endpoint de contactos para todas las categorías de novias
+    console.log(`📋 Obteniendo contactos de BridalLive para ${bridesCategories.length} categorías de novias...`);
     const axios = require('axios');
 
-    // Obtener contactos de "Brides - Not Purchased" (53671)
-    console.log('   🔍 Consultando categoría 53671: "Brides - Not Purchased"');
-    const responseNotPurchased = await axios.post('https://app.bridallive.com/bl-server/api/contacts/list', {
-      typeId: 1,
-      categoryId: 53671
-    }, {
-      headers: {
-        'token': token,
-        'Content-Type': 'application/json'
+    const categoryResults = [];
+    const allContacts = [];
+
+    // Procesar cada categoría
+    for (const category of bridesCategories) {
+      try {
+        console.log(`   🔍 Consultando categoría ${category.id}: "${category.name}" ${category.icon}`);
+
+        const response = await axios.post('https://app.bridallive.com/bl-server/api/contacts/list', {
+          typeId: 1,
+          categoryId: category.id
+        }, {
+          headers: {
+            'token': token,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        const contacts = response.data.result;
+        const contactCount = Array.isArray(contacts) ? contacts.length : 0;
+
+        categoryResults.push({
+          ...category,
+          contacts: contacts || [],
+          count: contactCount
+        });
+
+        if (Array.isArray(contacts)) {
+          allContacts.push(...contacts);
+        }
+
+        console.log(`      ✅ ${contactCount} contactos encontrados`);
+      } catch (error) {
+        console.error(`      ❌ Error en categoría ${category.id}:`, error.message);
+        categoryResults.push({
+          ...category,
+          contacts: [],
+          count: 0,
+          error: error.message
+        });
       }
-    });
+    }
 
-    // Obtener contactos de "Brides - Purchased" (53672)
-    console.log('   🔍 Consultando categoría 53672: "Brides - Purchased"');
-    const responsePurchased = await axios.post('https://app.bridallive.com/bl-server/api/contacts/list', {
-      typeId: 1,
-      categoryId: 53672
-    }, {
-      headers: {
-        'token': token,
-        'Content-Type': 'application/json'
-      }
-    });
+    const totalContacts = allContacts.length;
 
-    const contactsNotPurchased = responseNotPurchased.data.result;
-    const contactsPurchased = responsePurchased.data.result;
-
-    // Combinar ambos arrays
-    const contacts = [...(Array.isArray(contactsNotPurchased) ? contactsNotPurchased : []),
-                      ...(Array.isArray(contactsPurchased) ? contactsPurchased : [])];
-    
-    if (!Array.isArray(contacts)) {
+    if (totalContacts === 0) {
       return res.status(500).json({
-        error: 'La respuesta de BridalLive no es un array',
-        message: 'Se esperaba un array de contactos',
-        receivedType: typeof contacts
+        error: 'No se pudieron obtener contactos de BridalLive',
+        message: 'Todas las categorías devolvieron arrays vacíos o con errores',
+        categories: categoryResults.map(cat => ({
+          id: cat.id,
+          name: cat.name,
+          count: cat.count,
+          error: cat.error || null
+        }))
       });
     }
     
-    console.log(`\n📊 Total de contactos obtenidos: ${contacts.length}`);
-    console.log(`   ⚫ Not Purchased: ${Array.isArray(contactsNotPurchased) ? contactsNotPurchased.length : 0}`);
-    console.log(`   ✅ Purchased: ${Array.isArray(contactsPurchased) ? contactsPurchased.length : 0}`);
+    console.log(`\n📊 Total de contactos obtenidos: ${totalContacts}`);
+
+    // Mostrar resumen por categoría
+    categoryResults.forEach(cat => {
+      const status = cat.error ? '❌ ERROR' : `✅ ${cat.count}`;
+      console.log(`   ${cat.icon} ${cat.name}: ${status}`);
+      if (cat.error) {
+        console.log(`      Error: ${cat.error}`);
+      }
+    });
     console.log('=====================================');
-    
-    // Filtrar y separar contactos por categoría
-    const bridesNotPurchased = contacts.filter(contact =>
-      contact.categoryDescription === "Brides - Not Purchased"
-    );
 
-    const bridesPurchased = contacts.filter(contact =>
-      contact.categoryDescription === "Brides - Purchased"
-    );
+    // Preparar contactos para procesamiento en modo testing
+    const contactsToProcess = [];
+    const categoryStats = [];
 
-    console.log(`\n👰 Contactos "Brides - Not Purchased" encontrados: ${bridesNotPurchased.length}`);
-    console.log(`👰✅ Contactos "Brides - Purchased" encontrados: ${bridesPurchased.length}`);
+    categoryResults.forEach(category => {
+      if (category.count > 0) {
+        const contactsFromCategory = category.contacts.slice(0, category.testLimit);
+        contactsToProcess.push(...contactsFromCategory);
 
-    // Para testing, procesar solo los primeros 3 contactos de cada categoría
-    const notPurchasedToProcess = bridesNotPurchased.slice(0, 3);
-    const purchasedToProcess = bridesPurchased.slice(0, 3);
-    const contactsToProcess = [...notPurchasedToProcess, ...purchasedToProcess];
+        categoryStats.push({
+          id: category.id,
+          name: category.name,
+          icon: category.icon,
+          total: category.count,
+          processed: contactsFromCategory.length
+        });
 
-    console.log(`\n🧪 Modo testing:`);
-    console.log(`   - Procesando ${notPurchasedToProcess.length} "Not Purchased"`);
-    console.log(`   - Procesando ${purchasedToProcess.length} "Purchased"`);
-    console.log(`   - Total a procesar: ${contactsToProcess.length} contactos`);
+        console.log(`\n${category.icon} Categoría "${category.name}":`);
+        console.log(`   - Total encontrados: ${category.count}`);
+        console.log(`   - A procesar (testing): ${contactsFromCategory.length}`);
+      }
+    });
+
+    console.log(`\n🧪 Modo testing - Total a procesar: ${contactsToProcess.length} contactos`);
     
     // Importar el servicio de Shopify
     const shopifyService = require('./shopify-service');
@@ -849,7 +891,8 @@ app.get('/update-bridallive-tags', async (req, res) => {
       try {
         // Determinar la categoría del contacto y las etiquetas a aplicar
         const category = contact.categoryDescription;
-        const categoryIcon = category === "Brides - Not Purchased" ? "⚫" : "✅";
+        const categoryConfig = bridesCategories.find(cat => cat.name === category);
+        const categoryIcon = categoryConfig ? categoryConfig.icon : '❓';
         const tagsToApply = [category];
 
         console.log(`\n🔍 Procesando contacto ${categoryIcon}: ${contact.firstName} ${contact.lastName} (${contact.emailAddress})`);
@@ -897,22 +940,26 @@ app.get('/update-bridallive-tags', async (req, res) => {
     // Devolver resumen del procesamiento
     const summary = {
       success: true,
-      message: `Procesados ${processedCount} contactos de ambas categorías (modo testing)`,
-      totalContacts: contacts.length,
-      categories: {
-        "bridesNotPurchased": {
-          total: bridesNotPurchased.length,
-          processed: notPurchasedToProcess.length
-        },
-        "bridesPurchased": {
-          total: bridesPurchased.length,
-          processed: purchasedToProcess.length
-        }
+      message: `Procesados ${processedCount} contactos de ${categoryStats.length} categorías de novias (modo testing)`,
+      totalContacts: totalContacts,
+      categoriesQueried: bridesCategories.length,
+      categoriesWithContacts: categoryStats.length,
+      categories: categoryStats.reduce((acc, cat) => {
+        acc[cat.name.replace(/[^a-zA-Z0-9]/g, '')] = {
+          id: cat.id,
+          name: cat.name,
+          icon: cat.icon,
+          total: cat.total,
+          processed: cat.processed
+        };
+        return acc;
+      }, {}),
+      processing: {
+        processed: processedCount,
+        updated: updatedCount,
+        notFound: notFoundCount,
+        errors: errorCount
       },
-      processed: processedCount,
-      updated: updatedCount,
-      notFound: notFoundCount,
-      errors: errorCount,
       errorDetails: errors.length > 0 ? errors : null,
       testingMode: true,
       timestamp: new Date().toISOString()
