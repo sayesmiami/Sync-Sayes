@@ -765,11 +765,13 @@ app.get('/update-bridallive-tags', async (req, res) => {
     
     console.log('🔑 Token obtenido:', token.substring(0, 10) + '...');
     
-    // Consumir endpoint de contactos
+    // Consumir endpoint de contactos para ambas categorías
     console.log('📋 Obteniendo contactos de BridalLive...');
     const axios = require('axios');
-    
-    const response = await axios.post('https://app.bridallive.com/bl-server/api/contacts/list', {
+
+    // Obtener contactos de "Brides - Not Purchased" (53671)
+    console.log('   🔍 Consultando categoría 53671: "Brides - Not Purchased"');
+    const responseNotPurchased = await axios.post('https://app.bridallive.com/bl-server/api/contacts/list', {
       typeId: 1,
       categoryId: 53671
     }, {
@@ -778,8 +780,25 @@ app.get('/update-bridallive-tags', async (req, res) => {
         'Content-Type': 'application/json'
       }
     });
-    
-    const contacts = response.data.result;
+
+    // Obtener contactos de "Brides - Purchased" (53672)
+    console.log('   🔍 Consultando categoría 53672: "Brides - Purchased"');
+    const responsePurchased = await axios.post('https://app.bridallive.com/bl-server/api/contacts/list', {
+      typeId: 1,
+      categoryId: 53672
+    }, {
+      headers: {
+        'token': token,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    const contactsNotPurchased = responseNotPurchased.data.result;
+    const contactsPurchased = responsePurchased.data.result;
+
+    // Combinar ambos arrays
+    const contacts = [...(Array.isArray(contactsNotPurchased) ? contactsNotPurchased : []),
+                      ...(Array.isArray(contactsPurchased) ? contactsPurchased : [])];
     
     if (!Array.isArray(contacts)) {
       return res.status(500).json({
@@ -789,19 +808,32 @@ app.get('/update-bridallive-tags', async (req, res) => {
       });
     }
     
-    console.log(`\n📊 Contactos obtenidos: ${contacts.length}`);
+    console.log(`\n📊 Total de contactos obtenidos: ${contacts.length}`);
+    console.log(`   ⚫ Not Purchased: ${Array.isArray(contactsNotPurchased) ? contactsNotPurchased.length : 0}`);
+    console.log(`   ✅ Purchased: ${Array.isArray(contactsPurchased) ? contactsPurchased.length : 0}`);
     console.log('=====================================');
     
-    // Filtrar contactos con categoryDescription "Brides - Not Purchased"
-    const bridesNotPurchased = contacts.filter(contact => 
+    // Filtrar y separar contactos por categoría
+    const bridesNotPurchased = contacts.filter(contact =>
       contact.categoryDescription === "Brides - Not Purchased"
     );
-    
+
+    const bridesPurchased = contacts.filter(contact =>
+      contact.categoryDescription === "Brides - Purchased"
+    );
+
     console.log(`\n👰 Contactos "Brides - Not Purchased" encontrados: ${bridesNotPurchased.length}`);
-    
-    // Para testing, procesar solo los primeros 5 contactos
-    const contactsToProcess = bridesNotPurchased.slice(0, 5);
-    console.log(`🧪 Modo testing: procesando solo ${contactsToProcess.length} contactos`);
+    console.log(`👰✅ Contactos "Brides - Purchased" encontrados: ${bridesPurchased.length}`);
+
+    // Para testing, procesar solo los primeros 3 contactos de cada categoría
+    const notPurchasedToProcess = bridesNotPurchased.slice(0, 3);
+    const purchasedToProcess = bridesPurchased.slice(0, 3);
+    const contactsToProcess = [...notPurchasedToProcess, ...purchasedToProcess];
+
+    console.log(`\n🧪 Modo testing:`);
+    console.log(`   - Procesando ${notPurchasedToProcess.length} "Not Purchased"`);
+    console.log(`   - Procesando ${purchasedToProcess.length} "Purchased"`);
+    console.log(`   - Total a procesar: ${contactsToProcess.length} contactos`);
     
     // Importar el servicio de Shopify
     const shopifyService = require('./shopify-service');
@@ -815,19 +847,25 @@ app.get('/update-bridallive-tags', async (req, res) => {
     // Procesar cada contacto
     for (const contact of contactsToProcess) {
       try {
-        console.log(`\n🔍 Procesando contacto: ${contact.firstName} ${contact.lastName} (${contact.emailAddress})`);
-        
+        // Determinar la categoría del contacto y las etiquetas a aplicar
+        const category = contact.categoryDescription;
+        const categoryIcon = category === "Brides - Not Purchased" ? "⚫" : "✅";
+        const tagsToApply = [category];
+
+        console.log(`\n🔍 Procesando contacto ${categoryIcon}: ${contact.firstName} ${contact.lastName} (${contact.emailAddress})`);
+        console.log(`   🏷️ Categoría: "${category}"`);
+
         // Buscar el customer en Shopify por email
         const customer = await shopifyService.findCustomerByEmail(contact.emailAddress);
-        
+
         if (customer) {
           console.log(`   ✅ Customer encontrado en Shopify: ID ${customer.id}`);
-          
-          // Actualizar las etiquetas del customer
-          const updatedCustomer = await shopifyService.updateCustomerTags(customer.id, ["Brides - Not Purchased"]);
-          
+
+          // Actualizar las etiquetas del customer con la categoría correcta
+          const updatedCustomer = await shopifyService.updateCustomerTags(customer.id, tagsToApply);
+
           if (updatedCustomer) {
-            console.log(`   🏷️  Etiquetas actualizadas: ["Brides - Not Purchased"]`);
+            console.log(`   🏷️  Etiquetas actualizadas: ["${category}"]`);
             updatedCount++;
           } else {
             console.log(`   ❌ Error actualizando etiquetas`);
@@ -859,9 +897,18 @@ app.get('/update-bridallive-tags', async (req, res) => {
     // Devolver resumen del procesamiento
     const summary = {
       success: true,
-      message: `Procesados ${processedCount} contactos "Brides - Not Purchased" (modo testing: ${contactsToProcess.length} de ${bridesNotPurchased.length})`,
+      message: `Procesados ${processedCount} contactos de ambas categorías (modo testing)`,
       totalContacts: contacts.length,
-      bridesNotPurchased: bridesNotPurchased.length,
+      categories: {
+        "bridesNotPurchased": {
+          total: bridesNotPurchased.length,
+          processed: notPurchasedToProcess.length
+        },
+        "bridesPurchased": {
+          total: bridesPurchased.length,
+          processed: purchasedToProcess.length
+        }
+      },
       processed: processedCount,
       updated: updatedCount,
       notFound: notFoundCount,
